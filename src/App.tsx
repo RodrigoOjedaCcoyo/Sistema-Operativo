@@ -44,7 +44,7 @@ export default function App() {
   const [filterProveedor, setFilterProveedor] = useState('');
   const [loadingData, setLoadingData] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
-  const [lastLoadStats, setLastLoadStats] = useState<{ tours: number; services: number; date: string } | null>(null);
+  const [lastLoadStats, setLastLoadStats] = useState<{ tours: number; services: number; date: string; totalRows: number | null; rlsBlocked: boolean } | null>(null);
 
   // Contabilidad Edit Modal State
   const [editingService, setEditingService] = useState<VentaServicioProveedor | null>(null);
@@ -76,7 +76,13 @@ export default function App() {
       setTours(res.tours);
       setServices(res.services);
       const totalServices = Object.values(res.services).reduce((acc, g) => acc + g.length, 0);
-      setLastLoadStats({ tours: res.tours.length, services: totalServices, date: selectedDate });
+      setLastLoadStats({
+        tours: res.tours.length,
+        services: totalServices,
+        date: selectedDate,
+        totalRows: res.totalRowsInTable,
+        rlsBlocked: res.rlsBlocked
+      });
     } catch (err: any) {
       console.error(err);
       const errMsg = err?.message || err?.toString() || 'Error desconocido';
@@ -652,44 +658,74 @@ export default function App() {
               </div>
             </div>
 
-            {/* Última lectura exitosa */}
-            {lastLoadStats && !dbError && (
+            {/* Diagnóstico de filas en tabla */}
+            {isSupabaseConfigured && lastLoadStats && !dbError && (
               <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px', marginBottom: '14px', fontSize: '12px' }}>
-                <div style={{ fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  <Info size={13} /> Última Lectura Exitosa
+                <div style={{ fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <Info size={13} /> Resultado de Lectura
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', textAlign: 'center' }}>
-                  <div style={{ background: 'var(--bg-card)', borderRadius: '8px', padding: '8px' }}>
-                    <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--success)' }}>{lastLoadStats.tours}</div>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Tours</div>
+
+                {/* RLS bloqueando silenciosamente */}
+                {lastLoadStats.totalRows === 0 && (
+                  <div style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger)', borderRadius: '10px', padding: '10px', marginBottom: '10px' }}>
+                    <div style={{ fontWeight: 700, color: 'var(--danger)', marginBottom: '4px' }}>🔴 RLS está bloqueando el acceso</div>
+                    <div style={{ color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                      La conexión funciona pero la tabla <code>venta_tour</code> reporta <strong>0 filas</strong> — esto significa que Supabase está bloqueando la consulta por <strong>Row Level Security</strong> sin política de lectura pública.
+                    </div>
                   </div>
-                  <div style={{ background: 'var(--bg-card)', borderRadius: '8px', padding: '8px' }}>
-                    <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--info)' }}>{lastLoadStats.services}</div>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Servicios</div>
+                )}
+
+                {/* Tabla tiene datos pero no para esta fecha */}
+                {lastLoadStats.totalRows !== null && lastLoadStats.totalRows > 0 && lastLoadStats.tours === 0 && (
+                  <div style={{ background: 'var(--warning-bg)', border: '1px solid var(--warning)', borderRadius: '10px', padding: '10px', marginBottom: '10px' }}>
+                    <div style={{ fontWeight: 700, color: 'var(--warning)', marginBottom: '4px' }}>⚠️ La tabla tiene datos pero no para esta fecha</div>
+                    <div style={{ color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                      Hay <strong>{lastLoadStats.totalRows}</strong> filas en total en la tabla, pero ninguna con <code>fecha_servicio = {lastLoadStats.date}</code>. Navega a una fecha que sí tenga tours en tu BD.
+                    </div>
                   </div>
-                  <div style={{ background: 'var(--bg-card)', borderRadius: '8px', padding: '8px' }}>
-                    <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--warning)' }}>{lastLoadStats.date}</div>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Fecha</div>
+                )}
+
+                {/* Todo OK */}
+                {lastLoadStats.tours > 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', textAlign: 'center' }}>
+                    <div style={{ background: 'var(--bg-card)', borderRadius: '8px', padding: '8px' }}>
+                      <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--success)' }}>{lastLoadStats.tours}</div>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Tours hoy</div>
+                    </div>
+                    <div style={{ background: 'var(--bg-card)', borderRadius: '8px', padding: '8px' }}>
+                      <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--info)' }}>{lastLoadStats.services}</div>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Servicios</div>
+                    </div>
+                    <div style={{ background: 'var(--bg-card)', borderRadius: '8px', padding: '8px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--warning)' }}>{lastLoadStats.totalRows ?? '?'}</div>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Total en BD</div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 
-            {/* Guía de solución RLS */}
-            {isSupabaseConfigured && dbError && (
-              <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: '12px', padding: '12px', marginBottom: '14px', fontSize: '12px' }}>
-                <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '8px' }}>⚡ Solución rápida — SQL Editor en Supabase:</div>
-                <pre style={{ background: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '8px', fontSize: '10px', color: '#a3e635', overflowX: 'auto', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{`ALTER TABLE venta_tour ENABLE ROW LEVEL SECURITY;
+            {/* Guía de solución RLS — mostrar si RLS bloquea O si hay error */}
+            {isSupabaseConfigured && (dbError || (lastLoadStats && lastLoadStats.totalRows === 0)) && (
+              <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '12px', padding: '12px', marginBottom: '14px', fontSize: '12px' }}>
+                <div style={{ fontWeight: 700, color: 'var(--warning)', marginBottom: '8px' }}>⚡ Solución — pega esto en Supabase → SQL Editor:</div>
+                <pre style={{ background: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '8px', fontSize: '10px', color: '#a3e635', overflowX: 'auto', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{`-- 1. Habilitar RLS
+ALTER TABLE venta_tour ENABLE ROW LEVEL SECURITY;
 ALTER TABLE venta_servicio_proveedor ENABLE ROW LEVEL SECURITY;
 
+-- 2. Permitir lectura pública (anon)
 CREATE POLICY "lectura_publica" ON venta_tour
   FOR SELECT USING (true);
 
 CREATE POLICY "lectura_publica" ON venta_servicio_proveedor
   FOR SELECT USING (true);
 
+-- 3. Permitir edición pública (checks y contabilidad)
 CREATE POLICY "edicion_publica" ON venta_servicio_proveedor
   FOR UPDATE USING (true);`}</pre>
+                <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                  Después de ejecutar, haz clic en "Probar conexión ahora" 👇
+                </div>
               </div>
             )}
 

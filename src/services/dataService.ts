@@ -16,9 +16,25 @@ export interface ContabilidadUpdateData {
 export async function fetchToursAndServices(selectedDate: string): Promise<{
   tours: VentaTour[];
   services: Record<string, VentaServicioProveedor[]>;
+  totalRowsInTable: number | null;   // null = no se pudo verificar
+  rlsBlocked: boolean;               // true = tabla vacía pero RLS puede estar bloqueando
 }> {
   if (isSupabaseConfigured && supabase) {
     console.log(`🔍 [Supabase] Consultando tours para la fecha: ${selectedDate}`);
+
+    // ── DIAGNÓSTICO RLS: Contar TODAS las filas sin filtro de fecha ──
+    let totalRowsInTable: number | null = null;
+    let rlsBlocked = false;
+    const { count, error: countErr } = await supabase
+      .from('venta_tour')
+      .select('*', { count: 'exact', head: true });
+
+    if (!countErr) {
+      totalRowsInTable = count ?? 0;
+      console.log(`📊 [Supabase] Total filas en venta_tour (sin filtro): ${totalRowsInTable}`);
+    } else {
+      console.warn('⚠️ [Supabase] No se pudo contar filas:', countErr.message);
+    }
 
     // Intento 1: Filtro por fecha exacta YYYY-MM-DD
     let { data: toursData, error: toursErr } = await supabase
@@ -45,11 +61,17 @@ export async function fetchToursAndServices(selectedDate: string): Promise<{
     }
 
     if (toursErr) {
-      console.error('❌ [Supabase] Error al cargar tours de la tabla "venta_tour":', toursErr);
+      console.error('❌ [Supabase] Error al cargar tours:', toursErr);
       throw toursErr;
     }
 
-    console.log(`✅ [Supabase] Tours obtenidos: ${toursData?.length || 0}`);
+    // Si hay filas en la tabla pero ninguna para esta fecha → puede ser RLS bloqueando por fecha
+    // Si hay 0 filas en total → la tabla está vacía
+    if (totalRowsInTable === 0 && !toursErr) {
+      rlsBlocked = true; // tabla reporta 0 filas → RLS bloquea el SELECT o la tabla está vacía
+    }
+
+    console.log(`✅ [Supabase] Tours obtenidos para ${selectedDate}: ${toursData?.length || 0} | Total en tabla: ${totalRowsInTable}`);
 
     const tourIds = toursData?.map(t => t.id_venta) || [];
     const servicesMap: Record<string, VentaServicioProveedor[]> = {};
@@ -61,9 +83,9 @@ export async function fetchToursAndServices(selectedDate: string): Promise<{
         .select('*, proveedor:id_proveedor(nombre_comercial)')
         .in('id_venta', tourIds);
 
-      // Intento 2: Si falla el join por diferencia de FK o esquema, consultar sin join
+      // Intento 2: Si falla el join, consultar sin join
       if (servErr) {
-        console.warn('⚠️ [Supabase] No se pudo unir con la tabla "proveedor" (posible diferencia de FK). Intentando consulta sin join:', servErr.message);
+        console.warn('⚠️ [Supabase] Join con proveedor falló, intentando sin join:', servErr.message);
         const { data: rawServices, error: rawErr } = await supabase
           .from('venta_servicio_proveedor')
           .select('*')
@@ -85,9 +107,9 @@ export async function fetchToursAndServices(selectedDate: string): Promise<{
       });
     }
 
-    return { tours: toursData || [], services: servicesMap };
+    return { tours: toursData || [], services: servicesMap, totalRowsInTable, rlsBlocked };
   } else {
-    // Si no están configuradas las credenciales, usar datos de demostración
+    // Modo Demo
     console.log(`ℹ️ [Modo Demo] Usando datos ficticios para fecha: ${selectedDate}`);
     const filteredTours = MOCK_TOURS.filter(t => t.fecha_servicio === selectedDate);
     const servicesMap: Record<string, VentaServicioProveedor[]> = {};
@@ -97,7 +119,7 @@ export async function fetchToursAndServices(selectedDate: string): Promise<{
         servicesMap[key] = [...MOCK_SERVICES[key]];
       }
     });
-    return { tours: filteredTours, services: servicesMap };
+    return { tours: filteredTours, services: servicesMap, totalRowsInTable: null, rlsBlocked: false };
   }
 }
 
