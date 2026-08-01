@@ -43,6 +43,8 @@ export default function App() {
   const [filterCliente, setFilterCliente] = useState('');
   const [filterProveedor, setFilterProveedor] = useState('');
   const [loadingData, setLoadingData] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [lastLoadStats, setLastLoadStats] = useState<{ tours: number; services: number; date: string } | null>(null);
 
   // Contabilidad Edit Modal State
   const [editingService, setEditingService] = useState<VentaServicioProveedor | null>(null);
@@ -68,13 +70,18 @@ export default function App() {
   // Load Data (Real Supabase BD if configured in .env, otherwise Demo)
   const loadData = async () => {
     setLoadingData(true);
+    setDbError(null);
     try {
       const res = await fetchToursAndServices(selectedDate);
       setTours(res.tours);
       setServices(res.services);
-    } catch (err) {
+      const totalServices = Object.values(res.services).reduce((acc, g) => acc + g.length, 0);
+      setLastLoadStats({ tours: res.tours.length, services: totalServices, date: selectedDate });
+    } catch (err: any) {
       console.error(err);
-      triggerToast('Error al cargar datos de la BD', 'error');
+      const errMsg = err?.message || err?.toString() || 'Error desconocido';
+      setDbError(errMsg);
+      triggerToast('❌ Error al leer la base de datos', 'error');
     } finally {
       setLoadingData(false);
     }
@@ -204,6 +211,12 @@ export default function App() {
           if (s.id !== service.id) return s;
           return {
             ...s,
+            metodo_pago: updateData.metodo_pago,
+            observaciones_pago: updateData.observaciones_pago,
+            observaciones_contables: updateData.observaciones_contables,
+            moneda: updateData.moneda,
+            costo_unitario: updateData.costo_unitario,
+            tipo_cambio: updateData.tipo_cambio,
             contratado: updateData.contratado,
             fecha_contratacion: updateData.fecha_contratacion || undefined
           };
@@ -591,30 +604,107 @@ export default function App() {
       ) : (
         /* Profile/Info Tab */
         <main className="checklist-container">
-          <div className="card" style={{ padding: '24px', textAlign: 'center' }}>
-            <div style={{ fontSize: '48px', marginBottom: '12px' }}>
-              {isSupabaseConfigured ? '🟢' : '⚙️'}
-            </div>
-            <h3 style={{ marginBottom: '8px' }}>Conexión a Base de Datos Supabase</h3>
-            
-            <div style={{ background: isSupabaseConfigured ? 'var(--success-bg)' : 'var(--warning-bg)', border: `1px solid ${isSupabaseConfigured ? 'var(--success)' : 'var(--warning)'}`, borderRadius: '12px', padding: '14px', marginBottom: '20px', textAlign: 'left' }}>
-              <div style={{ fontSize: '13px', fontWeight: 600, color: isSupabaseConfigured ? 'var(--success)' : 'var(--warning)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Database size={16} /> {isSupabaseConfigured ? 'Conectado a Base de Datos Real' : 'Modo Demo Activo'}
+          <div className="card" style={{ padding: '20px' }}>
+            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+              <div style={{ fontSize: '40px', marginBottom: '8px' }}>
+                {isSupabaseConfigured ? (dbError ? '🔴' : '🟢') : '⚙️'}
               </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-                {isSupabaseConfigured ? (
-                  <div>Los datos que ves son reales y se guardan directamente en Supabase.</div>
+              <h3 style={{ marginBottom: '4px' }}>Diagnóstico de Base de Datos</h3>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Latitud VCP – Supabase</div>
+            </div>
+
+            {/* Estado General */}
+            <div style={{ background: isSupabaseConfigured ? (dbError ? 'var(--danger-bg)' : 'var(--success-bg)') : 'var(--warning-bg)', border: `1px solid ${isSupabaseConfigured ? (dbError ? 'var(--danger)' : 'var(--success)') : 'var(--warning)'}`, borderRadius: '12px', padding: '14px', marginBottom: '14px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: isSupabaseConfigured ? (dbError ? 'var(--danger)' : 'var(--success)') : 'var(--warning)', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Database size={15} />
+                {!isSupabaseConfigured ? 'Variables de entorno no detectadas'
+                  : dbError ? 'Error al leer la base de datos'
+                  : 'Conectado y leyendo correctamente'}
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+                {!isSupabaseConfigured ? (
+                  <>
+                    <div>❌ <strong>VITE_SUPABASE_URL</strong>: No detectada</div>
+                    <div>❌ <strong>VITE_SUPABASE_ANON_KEY</strong>: No detectada</div>
+                    <div style={{ marginTop: '8px', padding: '8px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', fontFamily: 'monospace', fontSize: '11px' }}>
+                      👉 En Vercel → Settings → Environment Variables,<br/>
+                      agrega las dos variables con prefijo <strong>VITE_</strong><br/>
+                      y haz <strong>Redeploy</strong>.
+                    </div>
+                  </>
+                ) : dbError ? (
+                  <>
+                    <div>✅ Variables de entorno: <strong style={{color:'var(--success)'}}>Detectadas</strong></div>
+                    <div style={{ marginTop: '8px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '10px', fontFamily: 'monospace', fontSize: '11px', color: 'var(--danger)', wordBreak: 'break-all' }}>
+                      🔴 {dbError}
+                    </div>
+                    <div style={{ marginTop: '8px', fontSize: '11px' }}>
+                      💡 Posibles causas: RLS activado sin políticas, nombre de tabla incorrecto, o permisos de anon_key insuficientes.
+                    </div>
+                  </>
                 ) : (
-                  <div>
-                    Pega tu <strong>URL</strong> y <strong>Anon Key</strong> en el archivo <code>.env</code> para conectar a la base de datos real al instante.
-                  </div>
+                  <>
+                    <div>✅ Variables de entorno: <strong style={{color:'var(--success)'}}>Detectadas</strong></div>
+                    <div>✅ Tabla <code>venta_tour</code>: <strong style={{color:'var(--success)'}}>Accesible</strong></div>
+                    <div>✅ Tabla <code>venta_servicio_proveedor</code>: <strong style={{color:'var(--success)'}}>Accesible</strong></div>
+                  </>
                 )}
               </div>
             </div>
 
-            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '18px' }}>
+            {/* Última lectura exitosa */}
+            {lastLoadStats && !dbError && (
+              <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px', marginBottom: '14px', fontSize: '12px' }}>
+                <div style={{ fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <Info size={13} /> Última Lectura Exitosa
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', textAlign: 'center' }}>
+                  <div style={{ background: 'var(--bg-card)', borderRadius: '8px', padding: '8px' }}>
+                    <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--success)' }}>{lastLoadStats.tours}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Tours</div>
+                  </div>
+                  <div style={{ background: 'var(--bg-card)', borderRadius: '8px', padding: '8px' }}>
+                    <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--info)' }}>{lastLoadStats.services}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Servicios</div>
+                  </div>
+                  <div style={{ background: 'var(--bg-card)', borderRadius: '8px', padding: '8px' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--warning)' }}>{lastLoadStats.date}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Fecha</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Guía de solución RLS */}
+            {isSupabaseConfigured && dbError && (
+              <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: '12px', padding: '12px', marginBottom: '14px', fontSize: '12px' }}>
+                <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '8px' }}>⚡ Solución rápida — SQL Editor en Supabase:</div>
+                <pre style={{ background: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '8px', fontSize: '10px', color: '#a3e635', overflowX: 'auto', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{`ALTER TABLE venta_tour ENABLE ROW LEVEL SECURITY;
+ALTER TABLE venta_servicio_proveedor ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "lectura_publica" ON venta_tour
+  FOR SELECT USING (true);
+
+CREATE POLICY "lectura_publica" ON venta_servicio_proveedor
+  FOR SELECT USING (true);
+
+CREATE POLICY "edicion_publica" ON venta_servicio_proveedor
+  FOR UPDATE USING (true);`}</pre>
+              </div>
+            )}
+
+            {/* Botón refrescar diagnóstico */}
+            <button
+              className="btn btn-secondary"
+              onClick={loadData}
+              style={{ width: '100%', justifyContent: 'center', marginBottom: '14px', fontSize: '13px' }}
+            >
+              <RefreshCw size={14} /> Probar conexión ahora
+            </button>
+
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '14px', textAlign: 'center' }}>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                Latitud VCP – Sistema Viajes Cusco Peru v1.3.0
+                Latitud VCP – Sistema Viajes Cusco Peru v1.3.1
               </div>
             </div>
           </div>
