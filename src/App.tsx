@@ -22,10 +22,11 @@ import {
 } from 'lucide-react';
 import type { VentaTour, VentaServicioProveedor } from './types';
 import { isSupabaseConfigured } from './supabaseClient';
-import { 
-  fetchToursAndServices, 
-  updateServiceOpsCheck, 
-  updateServiceContabilidad 
+import {
+  fetchToursAndServices,
+  fetchConfirmedServicesForAccounting,
+  updateServiceOpsCheck,
+  updateServiceContabilidad
 } from './services/dataService';
 
 export default function App() {
@@ -68,21 +69,30 @@ export default function App() {
   };
 
   // Load Data (Real Supabase BD if configured in .env, otherwise Demo)
+  // Operaciones: tours del día seleccionado. Contabilidad: todos los servicios
+  // ya confirmados por Operaciones (terminado = true), sin importar la fecha del tour.
   const loadData = async () => {
     setLoadingData(true);
     setDbError(null);
     try {
-      const res = await fetchToursAndServices(selectedDate);
-      setTours(res.tours);
-      setServices(res.services);
-      const totalServices = Object.values(res.services).reduce((acc, g) => acc + g.length, 0);
-      setLastLoadStats({
-        tours: res.tours.length,
-        services: totalServices,
-        date: selectedDate,
-        totalRows: res.totalRowsInTable,
-        rlsBlocked: res.rlsBlocked
-      });
+      if (areaMode === 'contabilidad') {
+        const res = await fetchConfirmedServicesForAccounting();
+        setTours(res.tours);
+        setServices(res.services);
+        setLastLoadStats(null);
+      } else {
+        const res = await fetchToursAndServices(selectedDate);
+        setTours(res.tours);
+        setServices(res.services);
+        const totalServices = Object.values(res.services).reduce((acc, g) => acc + g.length, 0);
+        setLastLoadStats({
+          tours: res.tours.length,
+          services: totalServices,
+          date: selectedDate,
+          totalRows: res.totalRowsInTable,
+          rlsBlocked: res.rlsBlocked
+        });
+      }
     } catch (err: any) {
       console.error(err);
       const errMsg = err?.message || err?.toString() || 'Error desconocido';
@@ -95,7 +105,7 @@ export default function App() {
 
   useEffect(() => {
     loadData();
-  }, [selectedDate]);
+  }, [selectedDate, areaMode]);
 
   // Toggle Check Ops (terminado)
   const toggleCheckOps = async (service: VentaServicioProveedor) => {
@@ -337,21 +347,23 @@ export default function App() {
             </div>
           </div>
 
-          {/* Date Selector */}
-          <section className="date-selector">
-            <button className="btn btn-secondary btn-icon" onClick={() => changeDate(-1)}>
-              <ChevronLeft size={20} />
-            </button>
-            <div className="date-display" style={{ cursor: 'pointer' }} onClick={goToday}>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                {isToday ? '📅 Hoy' : '📅 Fecha seleccionada'}
+          {/* Date Selector (solo aplica a Operaciones; Contabilidad ve todas las fechas) */}
+          {areaMode === 'operaciones' && (
+            <section className="date-selector">
+              <button className="btn btn-secondary btn-icon" onClick={() => changeDate(-1)}>
+                <ChevronLeft size={20} />
+              </button>
+              <div className="date-display" style={{ cursor: 'pointer' }} onClick={goToday}>
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  {isToday ? '📅 Hoy' : '📅 Fecha seleccionada'}
+                </div>
+                <div style={{ fontSize: '15px', fontWeight: 700 }}>{formatDateES(selectedDate)}</div>
               </div>
-              <div style={{ fontSize: '15px', fontWeight: 700 }}>{formatDateES(selectedDate)}</div>
-            </div>
-            <button className="btn btn-secondary btn-icon" onClick={() => changeDate(1)}>
-              <ChevronRight size={20} />
-            </button>
-          </section>
+              <button className="btn btn-secondary btn-icon" onClick={() => changeDate(1)}>
+                <ChevronRight size={20} />
+              </button>
+            </section>
+          )}
 
           {/* Summary pills */}
           {!loadingData && tours.length > 0 && (
@@ -426,11 +438,19 @@ export default function App() {
             ) : tours.length === 0 ? (
               <div className="empty-state">
                 <span className="empty-icon">🏔️</span>
-                <h3 style={{ fontSize: '18px' }}>Sin operaciones</h3>
-                <p style={{ fontSize: '13px' }}>No hay tours programados para este día. Prueba con otra fecha.</p>
-                <button className="btn btn-secondary" style={{ marginTop: '14px', fontSize: '13px' }} onClick={goToday}>
-                  <Calendar size={14} /> Ir a hoy
-                </button>
+                <h3 style={{ fontSize: '18px' }}>
+                  {areaMode === 'contabilidad' ? 'Sin servicios confirmados' : 'Sin operaciones'}
+                </h3>
+                <p style={{ fontSize: '13px' }}>
+                  {areaMode === 'contabilidad'
+                    ? 'Operaciones aún no ha marcado ningún servicio como terminado (Check Ops). Aparecerán aquí en cuanto los confirmen.'
+                    : 'No hay tours programados para este día. Prueba con otra fecha.'}
+                </p>
+                {areaMode === 'operaciones' && (
+                  <button className="btn btn-secondary" style={{ marginTop: '14px', fontSize: '13px' }} onClick={goToday}>
+                    <Calendar size={14} /> Ir a hoy
+                  </button>
+                )}
               </div>
             ) : filteredTours.length === 0 ? (
               <div className="empty-state">
@@ -455,7 +475,10 @@ export default function App() {
                     {/* Tour Header */}
                     <div className="tour-meta">
                       <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 700 }}>
-                        <Clock size={12} /> {tour.hora_inicio}
+                        <Clock size={12} />
+                        {areaMode === 'contabilidad'
+                          ? `${formatDateES(tour.fecha_servicio)} · ${tour.hora_inicio}`
+                          : tour.hora_inicio}
                       </span>
                       <span style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                         {tour.es_endoso && <span style={{ fontSize: '11px', background: 'rgba(168,85,247,0.15)', color: '#a855f7', borderRadius: '8px', padding: '2px 8px', fontWeight: 600 }}>🤝 ENDOSO</span>}

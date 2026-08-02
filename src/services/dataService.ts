@@ -123,6 +123,79 @@ export async function fetchToursAndServices(selectedDate: string): Promise<{
   }
 }
 
+// Cargar TODOS los servicios ya confirmados por Operaciones (terminado = true),
+// sin filtrar por fecha, para que Contabilidad administre pagos sin importar
+// cuándo ocurre el tour.
+export async function fetchConfirmedServicesForAccounting(): Promise<{
+  tours: VentaTour[];
+  services: Record<string, VentaServicioProveedor[]>;
+}> {
+  if (isSupabaseConfigured && supabase) {
+    let { data: servicesData, error: servErr } = await supabase
+      .from('venta_servicio_proveedor')
+      .select('*, proveedor:id_proveedor(nombre_comercial)')
+      .eq('terminado', true);
+
+    if (servErr) {
+      console.warn('⚠️ [Supabase] Join con proveedor falló, intentando sin join:', servErr.message);
+      const { data: rawServices, error: rawErr } = await supabase
+        .from('venta_servicio_proveedor')
+        .select('*')
+        .eq('terminado', true);
+
+      if (rawErr) {
+        console.error('❌ [Supabase] Error al cargar servicios confirmados:', rawErr);
+        throw rawErr;
+      }
+      servicesData = rawServices;
+    }
+
+    const tourIds = Array.from(new Set((servicesData || []).map((s: any) => s.id_venta)));
+    let toursData: VentaTour[] = [];
+
+    if (tourIds.length > 0) {
+      const { data, error: toursErr } = await supabase
+        .from('venta_tour')
+        .select('*')
+        .in('id_venta', tourIds)
+        .order('fecha_servicio', { ascending: true });
+
+      if (toursErr) {
+        console.error('❌ [Supabase] Error al cargar tours de servicios confirmados:', toursErr);
+        throw toursErr;
+      }
+      toursData = data || [];
+    }
+
+    const servicesMap: Record<string, VentaServicioProveedor[]> = {};
+    servicesData?.forEach((s: any) => {
+      const key = `${s.id_venta}-${s.n_linea}`;
+      if (!servicesMap[key]) servicesMap[key] = [];
+      servicesMap[key].push(s);
+    });
+
+    return { tours: toursData, services: servicesMap };
+  } else {
+    // Modo Demo: mismo filtro (terminado = true) sobre los datos ficticios
+    const servicesMap: Record<string, VentaServicioProveedor[]> = {};
+    const confirmedTourKeys = new Set<string>();
+
+    Object.entries(MOCK_SERVICES).forEach(([key, group]) => {
+      const confirmed = group.filter(s => s.terminado);
+      if (confirmed.length > 0) {
+        servicesMap[key] = confirmed;
+        confirmedTourKeys.add(key);
+      }
+    });
+
+    const tours = MOCK_TOURS
+      .filter(t => confirmedTourKeys.has(`${t.id_venta}-${t.n_linea}`))
+      .sort((a, b) => a.fecha_servicio.localeCompare(b.fecha_servicio));
+
+    return { tours, services: servicesMap };
+  }
+}
+
 // Actualizar Check Ops (terminado)
 export async function updateServiceOpsCheck(serviceOrId: VentaServicioProveedor | number, isFinished: boolean) {
   const todayStr = new Date().toISOString().split('T')[0];
