@@ -12,6 +12,68 @@ export interface ContabilidadUpdateData {
   tipo_cambio: number;
 }
 
+// Selecciona los datos de venta_tour + el nombre del cliente, estado de venta
+// y agencia aliada, que en realidad viven en las tablas venta / cliente (no en venta_tour)
+const TOUR_SELECT = '*, venta:id_venta(estado_venta, id_agencia_aliada, drive_url, cliente:id_cliente(nombre))';
+
+// Aplana el objeto anidado `venta` devuelto por el join a los campos planos
+// que espera VentaTour (nombre_cliente, estado_venta, id_agencia_aliada, drive_url)
+function flattenTour(t: any): VentaTour {
+  const { venta, ...rest } = t;
+  return {
+    ...rest,
+    nombre_cliente: venta?.cliente?.nombre,
+    estado_venta: venta?.estado_venta,
+    id_agencia_aliada: venta?.id_agencia_aliada,
+    drive_url: venta?.drive_url
+  };
+}
+
+// venta_servicio_proveedor no tiene columnas de método/observaciones de pago —
+// esos datos viven en pago_operativo (pago real al proveedor/guía). Los traemos
+// aparte y los enlazamos por id_venta + n_linea + id_proveedor, agrupando por tour.
+async function agruparServiciosConPagos(servicesData: any[] | null, tourIds: number[]): Promise<Record<string, VentaServicioProveedor[]>> {
+  const servicesMap: Record<string, VentaServicioProveedor[]> = {};
+  if (!servicesData || servicesData.length === 0) return servicesMap;
+
+  const pagoPorServicio: Record<string, any> = {};
+  if (supabase && tourIds.length > 0) {
+    const { data: pagosData, error: pagosErr } = await supabase
+      .from('pago_operativo')
+      .select('*')
+      .in('id_venta', tourIds);
+
+    if (pagosErr) {
+      console.warn('⚠️ [Supabase] No se pudieron cargar pagos a proveedor:', pagosErr.message);
+    }
+
+    // Si un servicio tiene más de un pago registrado, nos quedamos con el más reciente
+    pagosData?.forEach((p: any) => {
+      const key = `${p.id_venta}-${p.n_linea}-${p.id_proveedor}`;
+      const actual = pagoPorServicio[key];
+      if (!actual || new Date(p.created_at) > new Date(actual.created_at)) {
+        pagoPorServicio[key] = p;
+      }
+    });
+  }
+
+  servicesData.forEach((s: any) => {
+    const pago = pagoPorServicio[`${s.id_venta}-${s.n_linea}-${s.id_proveedor}`];
+    const merged: VentaServicioProveedor = {
+      ...s,
+      metodo_pago: pago?.metodo_pago,
+      observaciones_pago: pago?.observaciones,
+      observaciones_contables: pago?.observaciones_contables,
+      id_pago_op: pago?.id_pago_op
+    };
+    const key = `${merged.id_venta}-${merged.n_linea}`;
+    if (!servicesMap[key]) servicesMap[key] = [];
+    servicesMap[key].push(merged);
+  });
+
+  return servicesMap;
+}
+
 // Cargar tours y servicios según fecha
 export async function fetchToursAndServices(selectedDate: string): Promise<{
   tours: VentaTour[];
@@ -35,23 +97,6 @@ export async function fetchToursAndServices(selectedDate: string): Promise<{
     } else {
       console.warn('⚠️ [Supabase] No se pudo contar filas:', countErr.message);
     }
-
-    // Selecciona los datos de venta_tour + el nombre del cliente, estado de venta
-    // y agencia aliada, que en realidad viven en las tablas venta / cliente (no en venta_tour)
-    const TOUR_SELECT = '*, venta:id_venta(estado_venta, id_agencia_aliada, drive_url, cliente:id_cliente(nombre))';
-
-    // Aplana el objeto anidado `venta` devuelto por el join a los campos planos
-    // que espera VentaTour (nombre_cliente, estado_venta, id_agencia_aliada, drive_url)
-    const flattenTour = (t: any): VentaTour => {
-      const { venta, ...rest } = t;
-      return {
-        ...rest,
-        nombre_cliente: venta?.cliente?.nombre,
-        estado_venta: venta?.estado_venta,
-        id_agencia_aliada: venta?.id_agencia_aliada,
-        drive_url: venta?.drive_url
-      };
-    };
 
     // Intento 1: Filtro por fecha exacta YYYY-MM-DD
     let { data: toursDataRaw, error: toursErr } = await supabase
@@ -93,7 +138,7 @@ export async function fetchToursAndServices(selectedDate: string): Promise<{
     console.log(`✅ [Supabase] Tours obtenidos para ${selectedDate}: ${toursData?.length || 0} | Total en tabla: ${totalRowsInTable}`);
 
     const tourIds = toursData?.map(t => t.id_venta) || [];
-    const servicesMap: Record<string, VentaServicioProveedor[]> = {};
+    let servicesMap: Record<string, VentaServicioProveedor[]> = {};
 
     if (tourIds.length > 0) {
       // Intento 1: Consulta con relación de proveedor
@@ -119,41 +164,7 @@ export async function fetchToursAndServices(selectedDate: string): Promise<{
 
       console.log(`✅ [Supabase] Servicios obtenidos: ${servicesData?.length || 0}`);
 
-      // venta_servicio_proveedor no tiene columnas de método/observaciones de pago —
-      // esos datos viven en pago_operativo (pago real al proveedor/guía). Los traemos
-      // aparte y los enlazamos por id_venta + n_linea + id_proveedor.
-      const { data: pagosData, error: pagosErr } = await supabase
-        .from('pago_operativo')
-        .select('*')
-        .in('id_venta', tourIds);
-
-      if (pagosErr) {
-        console.warn('⚠️ [Supabase] No se pudieron cargar pagos a proveedor:', pagosErr.message);
-      }
-
-      // Si un servicio tiene más de un pago registrado, nos quedamos con el más reciente
-      const pagoPorServicio: Record<string, any> = {};
-      pagosData?.forEach((p: any) => {
-        const key = `${p.id_venta}-${p.n_linea}-${p.id_proveedor}`;
-        const actual = pagoPorServicio[key];
-        if (!actual || new Date(p.created_at) > new Date(actual.created_at)) {
-          pagoPorServicio[key] = p;
-        }
-      });
-
-      servicesData?.forEach((s: any) => {
-        const pago = pagoPorServicio[`${s.id_venta}-${s.n_linea}-${s.id_proveedor}`];
-        const merged: VentaServicioProveedor = {
-          ...s,
-          metodo_pago: pago?.metodo_pago,
-          observaciones_pago: pago?.observaciones,
-          observaciones_contables: pago?.observaciones_contables,
-          id_pago_op: pago?.id_pago_op
-        };
-        const key = `${merged.id_venta}-${merged.n_linea}`;
-        if (!servicesMap[key]) servicesMap[key] = [];
-        servicesMap[key].push(merged);
-      });
+      servicesMap = await agruparServiciosConPagos(servicesData, tourIds);
     }
 
     return { tours: toursData || [], services: servicesMap, totalRowsInTable, rlsBlocked };
@@ -169,6 +180,74 @@ export async function fetchToursAndServices(selectedDate: string): Promise<{
       }
     });
     return { tours: filteredTours, services: servicesMap, totalRowsInTable: null, rlsBlocked: false };
+  }
+}
+
+// Cargar TODOS los servicios ya confirmados por Operaciones (terminado = true),
+// sin filtrar por fecha, para que Contabilidad administre pagos sin importar
+// cuándo ocurre el tour.
+export async function fetchConfirmedServicesForAccounting(): Promise<{
+  tours: VentaTour[];
+  services: Record<string, VentaServicioProveedor[]>;
+}> {
+  if (isSupabaseConfigured && supabase) {
+    let { data: servicesData, error: servErr } = await supabase
+      .from('venta_servicio_proveedor')
+      .select('*, proveedor:id_proveedor(nombre_comercial)')
+      .eq('terminado', true);
+
+    if (servErr) {
+      console.warn('⚠️ [Supabase] Join con proveedor falló, intentando sin join:', servErr.message);
+      const { data: rawServices, error: rawErr } = await supabase
+        .from('venta_servicio_proveedor')
+        .select('*')
+        .eq('terminado', true);
+
+      if (rawErr) {
+        console.error('❌ [Supabase] Error al cargar servicios confirmados:', rawErr);
+        throw rawErr;
+      }
+      servicesData = rawServices;
+    }
+
+    const tourIds = Array.from(new Set((servicesData || []).map((s: any) => s.id_venta)));
+    let toursData: VentaTour[] = [];
+
+    if (tourIds.length > 0) {
+      const { data, error: toursErr } = await supabase
+        .from('venta_tour')
+        .select(TOUR_SELECT)
+        .in('id_venta', tourIds)
+        .order('fecha_servicio', { ascending: true });
+
+      if (toursErr) {
+        console.error('❌ [Supabase] Error al cargar tours de servicios confirmados:', toursErr);
+        throw toursErr;
+      }
+      toursData = (data || []).map(flattenTour);
+    }
+
+    const servicesMap = await agruparServiciosConPagos(servicesData, tourIds);
+
+    return { tours: toursData, services: servicesMap };
+  } else {
+    // Modo Demo: mismo filtro (terminado = true) sobre los datos ficticios
+    const servicesMap: Record<string, VentaServicioProveedor[]> = {};
+    const confirmedTourKeys = new Set<string>();
+
+    Object.entries(MOCK_SERVICES).forEach(([key, group]) => {
+      const confirmed = group.filter(s => s.terminado);
+      if (confirmed.length > 0) {
+        servicesMap[key] = confirmed;
+        confirmedTourKeys.add(key);
+      }
+    });
+
+    const tours = MOCK_TOURS
+      .filter(t => confirmedTourKeys.has(`${t.id_venta}-${t.n_linea}`))
+      .sort((a, b) => a.fecha_servicio.localeCompare(b.fecha_servicio));
+
+    return { tours, services: servicesMap };
   }
 }
 
