@@ -512,7 +512,7 @@ export default function App() {
                       <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 700 }}>
                         <Clock size={12} />
                         {areaMode === 'contabilidad'
-                          ? `${formatDateES(tour.fecha_servicio)} · ${tour.hora_inicio}`
+                          ? `${formatDateES(tour.fecha_servicio)}${tour.hora_inicio ? ' · ' + tour.hora_inicio : ''}`
                           : tour.hora_inicio}
                       </span>
                       <span style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
