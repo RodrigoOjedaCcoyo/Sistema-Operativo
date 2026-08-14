@@ -18,14 +18,17 @@ import {
   Check,
   ShieldCheck,
   CreditCard,
-  Database
+  Database,
+  Paperclip,
+  FolderOpen
 } from 'lucide-react';
 import type { VentaTour, VentaServicioProveedor } from './types';
 import { isSupabaseConfigured } from './supabaseClient';
-import { 
-  fetchToursAndServices, 
-  updateServiceOpsCheck, 
-  updateServiceContabilidad 
+import {
+  fetchToursAndServices,
+  updateServiceOpsCheck,
+  updateServiceContabilidad,
+  uploadAttachmentToVenta
 } from './services/dataService';
 
 export default function App() {
@@ -59,6 +62,9 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
+
+  // Adjuntar archivos a Drive (Expediente Digital de la venta)
+  const [uploadingTourKey, setUploadingTourKey] = useState<string | null>(null);
 
   const triggerToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToastMessage(msg);
@@ -166,7 +172,8 @@ export default function App() {
             costo_unitario: updateData.costo_unitario,
             tipo_cambio: updateData.tipo_cambio,
             contratado: updateData.contratado,
-            fecha_contratacion: updateData.fecha_contratacion || undefined
+            fecha_contratacion: updateData.fecha_contratacion || undefined,
+            id_pago_op: updateData.id_pago_op ?? s.id_pago_op
           };
         });
         return { ...prev, [key]: updated };
@@ -180,8 +187,8 @@ export default function App() {
       } else {
         triggerToast('💾 Datos Contables Guardados!');
       }
-    } catch (e) {
-      triggerToast('Error al actualizar en la BD', 'error');
+    } catch (e: any) {
+      triggerToast(e?.message || 'Error al actualizar en la BD', 'error');
     }
   };
 
@@ -224,14 +231,42 @@ export default function App() {
             costo_unitario: updateData.costo_unitario,
             tipo_cambio: updateData.tipo_cambio,
             contratado: updateData.contratado,
-            fecha_contratacion: updateData.fecha_contratacion || undefined
+            fecha_contratacion: updateData.fecha_contratacion || undefined,
+            id_pago_op: updateData.id_pago_op ?? s.id_pago_op
           };
         });
         return { ...prev, [key]: updated };
       });
       triggerToast(isNowChecked ? '💰 Pago Confirmado' : '⬜ Pago desmarcado');
-    } catch (e) {
-      triggerToast('Error al actualizar en la BD', 'error');
+    } catch (e: any) {
+      triggerToast(e?.message || 'Error al actualizar en la BD', 'error');
+    }
+  };
+
+  // Adjuntar un archivo (foto/PDF/etc.) a la carpeta de Drive de un tour/venta
+  const handleAttachFile = async (tour: VentaTour, file: File) => {
+    const tourKey = `${tour.id_venta}-${tour.n_linea}`;
+    setUploadingTourKey(tourKey);
+    try {
+      const { folderLink } = await uploadAttachmentToVenta(file, {
+        id_venta: tour.id_venta,
+        fecha_servicio: tour.fecha_servicio,
+        nombre_cliente: tour.nombre_cliente,
+        cantidad: tour.cantidad,
+        drive_url: tour.drive_url
+      });
+
+      setTours(prev => prev.map(t =>
+        t.id_venta === tour.id_venta && t.n_linea === tour.n_linea
+          ? { ...t, drive_url: folderLink }
+          : t
+      ));
+
+      triggerToast('📎 Archivo subido a Drive');
+    } catch (e: any) {
+      triggerToast(e?.message || 'Error al subir el archivo', 'error');
+    } finally {
+      setUploadingTourKey(null);
     }
   };
 
@@ -467,12 +502,48 @@ export default function App() {
 
                     <h3 className="tour-title">{tour.observacion}</h3>
 
-                    <div className="tour-client">
-                      <User size={13} style={{ color: 'var(--primary-hover)', flexShrink: 0 }} />
-                      <span style={{ fontWeight: 600 }}>{tour.nombre_cliente}</span>
-                      <span style={{ color: 'var(--text-muted)' }}>·</span>
-                      <Users size={12} style={{ flexShrink: 0 }} />
-                      <span>{tour.cantidad} pax</span>
+                    <div className="tour-client" style={{ justifyContent: 'space-between' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <User size={13} style={{ color: 'var(--primary-hover)', flexShrink: 0 }} />
+                        <span style={{ fontWeight: 600 }}>{tour.nombre_cliente}</span>
+                        <span style={{ color: 'var(--text-muted)' }}>·</span>
+                        <Users size={12} style={{ flexShrink: 0 }} />
+                        <span>{tour.cantidad} pax</span>
+                      </span>
+
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {tour.drive_url && (
+                          <a
+                            href={tour.drive_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Ver archivos en Drive"
+                            style={{ display: 'flex', color: 'var(--info)' }}
+                          >
+                            <FolderOpen size={15} />
+                          </a>
+                        )}
+                        <label
+                          title="Adjuntar archivo a Drive"
+                          style={{ display: 'flex', cursor: uploadingTourKey === tourKey ? 'default' : 'pointer', color: 'var(--text-secondary)' }}
+                        >
+                          {uploadingTourKey === tourKey ? (
+                            <RefreshCw size={15} style={{ animation: 'spin 1s linear infinite' }} />
+                          ) : (
+                            <Paperclip size={15} />
+                          )}
+                          <input
+                            type="file"
+                            style={{ display: 'none' }}
+                            disabled={uploadingTourKey === tourKey}
+                            onChange={e => {
+                              const file = e.target.files?.[0];
+                              if (file) handleAttachFile(tour, file);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                      </span>
                     </div>
 
                     {/* Progress bar */}
