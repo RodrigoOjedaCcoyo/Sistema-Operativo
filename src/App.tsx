@@ -901,8 +901,11 @@ CREATE POLICY "edicion_publica" ON venta_servicio_proveedor
                     type="number"
                     step="0.01"
                     className="input-field"
-                    value={formCostoUnitario}
-                    onChange={e => setFormCostoUnitario(parseFloat(e.target.value) || 0)}
+                    value={formCostoUnitario === 0 ? '' : formCostoUnitario}
+                    onChange={e => {
+                      const raw = e.target.value;
+                      setFormCostoUnitario(raw === '' ? 0 : parseFloat(raw) || 0);
+                    }}
                   />
                 </div>
               </div>
@@ -914,8 +917,11 @@ CREATE POLICY "edicion_publica" ON venta_servicio_proveedor
                   type="number"
                   step="0.001"
                   className="input-field"
-                  value={formTC}
-                  onChange={e => setFormTC(parseFloat(e.target.value) || 3.75)}
+                  value={formTC === 0 ? '' : formTC}
+                  onChange={e => {
+                    const raw = e.target.value;
+                    setFormTC(raw === '' ? 0 : parseFloat(raw) || 0);
+                  }}
                 />
               </div>
 
