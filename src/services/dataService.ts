@@ -478,3 +478,39 @@ export async function uploadAttachmentToVenta(
 
   return { fileLink: data.fileLink, folderLink: data.folderLink };
 }
+
+// Trae TODOS los nombres de cliente de la tabla `cliente`, sin depender de qué
+// tours estén cargados en pantalla (para el autocompletado del filtro).
+export async function fetchAllClientNames(): Promise<string[]> {
+  if (isSupabaseConfigured && supabase) {
+    const PAGE_SIZE = 1000;
+    let names: string[] = [];
+    let page = 0;
+
+    while (true) {
+      const from = page * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+      const { data, error } = await supabase
+        .from('cliente')
+        .select('nombre')
+        .not('nombre', 'is', null)
+        .order('nombre', { ascending: true })
+        .range(from, to);
+
+      if (error) {
+        console.warn('⚠️ [Supabase] No se pudieron cargar todos los clientes:', error.message);
+        break;
+      }
+
+      names = names.concat((data || []).map((c: any) => c.nombre).filter(Boolean));
+      if (!data || data.length < PAGE_SIZE) break;
+      page++;
+    }
+
+    return Array.from(new Set(names)).sort();
+  } else {
+    const names = new Set<string>();
+    MOCK_TOURS.forEach(t => { if (t.nombre_cliente) names.add(t.nombre_cliente); });
+    return Array.from(names).sort();
+  }
+}

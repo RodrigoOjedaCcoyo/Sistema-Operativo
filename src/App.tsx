@@ -29,7 +29,8 @@ import {
   fetchConfirmedServicesForAccounting,
   updateServiceOpsCheck,
   updateServiceContabilidad,
-  uploadAttachmentToVenta
+  uploadAttachmentToVenta,
+  fetchAllClientNames
 } from './services/dataService';
 
 export default function App() {
@@ -46,6 +47,7 @@ export default function App() {
   // Filtros de búsqueda
   const [filterCliente, setFilterCliente] = useState('');
   const [filterProveedor, setFilterProveedor] = useState('');
+  const [allClientNames, setAllClientNames] = useState<string[]>([]);
   const [loadingData, setLoadingData] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
   const [lastLoadStats, setLastLoadStats] = useState<{ tours: number; services: number; date: string; totalRows: number | null; rlsBlocked: boolean } | null>(null);
@@ -112,6 +114,12 @@ export default function App() {
   useEffect(() => {
     loadData();
   }, [selectedDate, areaMode]);
+
+  // Lista completa de clientes para el autocompletado del filtro, independiente
+  // de qué tours estén cargados en pantalla en ese momento
+  useEffect(() => {
+    fetchAllClientNames().then(setAllClientNames).catch(err => console.error('Error al cargar lista de clientes:', err));
+  }, []);
 
   // Toggle Check Ops (terminado)
   const toggleCheckOps = async (service: VentaServicioProveedor) => {
@@ -319,12 +327,6 @@ export default function App() {
     return Array.from(names).sort();
   }, [services]);
 
-  const allClientes = useMemo(() => {
-    const names = new Set<string>();
-    tours.forEach(t => { if (t.nombre_cliente) names.add(t.nombre_cliente); });
-    return Array.from(names).sort();
-  }, [tours]);
-
   const filteredTours = useMemo(() => {
     return tours.filter(tour => {
       const matchCliente = filterCliente === '' ||
@@ -435,7 +437,7 @@ export default function App() {
                 list="lista-clientes"
               />
               <datalist id="lista-clientes">
-                {allClientes.map(c => <option key={c} value={c} />)}
+                {allClientNames.map(c => <option key={c} value={c} />)}
               </datalist>
               {filterCliente && (
                 <button onClick={() => setFilterCliente('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', padding: '2px' }}>
