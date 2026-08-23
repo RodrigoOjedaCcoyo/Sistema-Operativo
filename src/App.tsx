@@ -319,6 +319,12 @@ export default function App() {
     return Array.from(names).sort();
   }, [services]);
 
+  const allClientes = useMemo(() => {
+    const names = new Set<string>();
+    tours.forEach(t => { if (t.nombre_cliente) names.add(t.nombre_cliente); });
+    return Array.from(names).sort();
+  }, [tours]);
+
   const filteredTours = useMemo(() => {
     return tours.filter(tour => {
       const matchCliente = filterCliente === '' ||
@@ -426,7 +432,11 @@ export default function App() {
                 value={filterCliente}
                 onChange={e => setFilterCliente(e.target.value)}
                 style={{ paddingLeft: '36px', paddingRight: filterCliente ? '36px' : '14px', width: '100%', padding: '10px 36px', fontSize: '13px' }}
+                list="lista-clientes"
               />
+              <datalist id="lista-clientes">
+                {allClientes.map(c => <option key={c} value={c} />)}
+              </datalist>
               {filterCliente && (
                 <button onClick={() => setFilterCliente('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', padding: '2px' }}>
                   <X size={14} />
