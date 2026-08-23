@@ -191,26 +191,44 @@ export async function fetchConfirmedServicesForAccounting(): Promise<{
   services: Record<string, VentaServicioProveedor[]>;
 }> {
   if (isSupabaseConfigured && supabase) {
-    let { data: servicesData, error: servErr } = await supabase
-      .from('venta_servicio_proveedor')
-      .select('*, proveedor:id_proveedor(nombre_comercial)')
-      .eq('terminado', true);
+    // Supabase corta cada consulta en 1000 filas por defecto — con más de 1000
+    // servicios confirmados, el resto se perdía en silencio. Paginamos hasta
+    // traerlos todos.
+    const PAGE_SIZE = 1000;
+    let servicesData: any[] = [];
+    let selectWithJoin = true;
+    let page = 0;
 
-    if (servErr) {
-      console.warn('⚠️ [Supabase] Join con proveedor falló, intentando sin join:', servErr.message);
-      const { data: rawServices, error: rawErr } = await supabase
+    while (true) {
+      const from = page * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+      const selectClause = selectWithJoin ? '*, proveedor:id_proveedor(nombre_comercial)' : '*';
+
+      const { data, error: servErr } = await supabase
         .from('venta_servicio_proveedor')
-        .select('*')
-        .eq('terminado', true);
+        .select(selectClause)
+        .eq('terminado', true)
+        .range(from, to);
 
-      if (rawErr) {
-        console.error('❌ [Supabase] Error al cargar servicios confirmados:', rawErr);
-        throw rawErr;
+      if (servErr) {
+        if (selectWithJoin && page === 0) {
+          console.warn('⚠️ [Supabase] Join con proveedor falló, intentando sin join:', servErr.message);
+          selectWithJoin = false;
+          continue;
+        }
+        console.error('❌ [Supabase] Error al cargar servicios confirmados:', servErr);
+        throw servErr;
       }
-      servicesData = rawServices;
+
+      servicesData = servicesData.concat(data || []);
+      if (!data || data.length < PAGE_SIZE) break;
+      page++;
     }
 
-    const tourIds = Array.from(new Set((servicesData || []).map((s: any) => s.id_venta)));
+    // Solo nos interesa el día exacto (id_venta + n_linea) que tiene el servicio
+    // confirmado, no el resto de días de una venta de varios días
+    const confirmedKeys = new Set(servicesData.map((s: any) => `${s.id_venta}-${s.n_linea}`));
+    const tourIds = Array.from(new Set(servicesData.map((s: any) => s.id_venta)));
     let toursData: VentaTour[] = [];
 
     if (tourIds.length > 0) {
@@ -224,7 +242,9 @@ export async function fetchConfirmedServicesForAccounting(): Promise<{
         console.error('❌ [Supabase] Error al cargar tours de servicios confirmados:', toursErr);
         throw toursErr;
       }
-      toursData = (data || []).map(flattenTour);
+      toursData = (data || [])
+        .filter((t: any) => confirmedKeys.has(`${t.id_venta}-${t.n_linea}`))
+        .map(flattenTour);
     }
 
     const servicesMap = await agruparServiciosConPagos(servicesData, tourIds);
