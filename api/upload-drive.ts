@@ -29,13 +29,23 @@ function extractFolderId(folderUrl?: string | null): string | null {
   return match ? match[1] : null;
 }
 
+// Normaliza para comparar nombres de carpeta sin que un espacio de más, doble
+// espacio, o mayúscula/minúscula distinta (ej. carpetas ya creadas por el
+// sistema general en Streamlit) hagan que no se reconozcan como la misma
+function normalizarNombre(nombre: string): string {
+  return nombre.trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
 async function buscarOCrearCarpeta(drive: ReturnType<typeof getDriveClient>, nombre: string, idPadre: string): Promise<string> {
-  const nombreEscapado = nombre.replace(/'/g, "\\'");
-  const q = `name = '${nombreEscapado}' and '${idPadre}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-  const existentes = await drive.files.list({ q, fields: 'files(id, name)', pageSize: 1 });
-  if (existentes.data.files && existentes.data.files.length > 0) {
-    return existentes.data.files[0].id!;
+  const q = `'${idPadre}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const existentes = await drive.files.list({ q, fields: 'files(id, name)', pageSize: 200 });
+
+  const objetivo = normalizarNombre(nombre);
+  const encontrada = existentes.data.files?.find(f => normalizarNombre(f.name || '') === objetivo);
+  if (encontrada) {
+    return encontrada.id!;
   }
+
   const nueva = await drive.files.create({
     requestBody: { name: nombre, mimeType: 'application/vnd.google-apps.folder', parents: [idPadre] },
     fields: 'id'

@@ -449,6 +449,21 @@ export async function uploadAttachmentToVenta(
 ): Promise<{ fileLink: string; folderLink: string }> {
   const base64 = await fileToBase64(file);
 
+  // No confiamos en venta.drive_url tal como llega del estado local de React: si
+  // una venta tiene varios días (tarjetas distintas para el mismo id_venta) y ya
+  // se subió un archivo desde otra tarjeta en esta misma sesión, ese estado local
+  // puede estar desactualizado y crear una carpeta duplicada en Drive. Volvemos a
+  // leer el valor real de la base justo antes de subir.
+  let currentDriveUrl = venta.drive_url ?? null;
+  if (isSupabaseConfigured && supabase) {
+    const { data: ventaActual } = await supabase
+      .from('venta')
+      .select('drive_url')
+      .eq('id_venta', venta.id_venta)
+      .single();
+    currentDriveUrl = ventaActual?.drive_url ?? null;
+  }
+
   const res = await fetch('/api/upload-drive', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -459,7 +474,7 @@ export async function uploadAttachmentToVenta(
       fechaServicio: venta.fecha_servicio,
       nombreCliente: venta.nombre_cliente,
       cantidadPax: venta.cantidad,
-      existingFolderUrl: venta.drive_url
+      existingFolderUrl: currentDriveUrl
     })
   });
 
@@ -469,7 +484,7 @@ export async function uploadAttachmentToVenta(
   }
 
   // Si la venta todavía no tenía carpeta asignada, guardamos el link nuevo
-  if (!venta.drive_url && isSupabaseConfigured && supabase) {
+  if (!currentDriveUrl && isSupabaseConfigured && supabase) {
     const { error } = await supabase
       .from('venta')
       .update({ drive_url: data.folderLink })

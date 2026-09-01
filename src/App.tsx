@@ -274,8 +274,11 @@ export default function App() {
         drive_url: tour.drive_url
       });
 
+      // Actualiza TODAS las tarjetas de esta venta (no solo la que se usó para
+      // subir) — una venta de varios días aparece como varias tarjetas, y todas
+      // comparten la misma carpeta de Drive
       setTours(prev => prev.map(t =>
-        t.id_venta === tour.id_venta && t.n_linea === tour.n_linea
+        t.id_venta === tour.id_venta
           ? { ...t, drive_url: folderLink }
           : t
       ));
