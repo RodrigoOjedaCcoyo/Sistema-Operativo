@@ -332,9 +332,15 @@ export async function updateServiceContabilidad(
     isContratado = markAsContratado;
   }
 
+  // El precio (costo_unitario/moneda/tipo_cambio) SÍ vive en venta_servicio_proveedor —
+  // hay que guardarlo ahí también, no solo en pago_operativo, porque es la columna
+  // que lee el sistema general (y el resto de la app) para mostrar el costo real.
   const checkUpdate = {
     contratado: isContratado,
-    fecha_contratacion: isContratado ? (service.fecha_contratacion || todayStr) : null
+    fecha_contratacion: isContratado ? (service.fecha_contratacion || todayStr) : null,
+    costo_unitario: formData.costo_unitario,
+    moneda: formData.moneda,
+    tipo_cambio: formData.tipo_cambio
   };
 
   if (isSupabaseConfigured && supabase) {
@@ -407,9 +413,6 @@ export async function updateServiceContabilidad(
       metodo_pago: formData.metodo_pago,
       observaciones_pago: formData.observaciones_pago,
       observaciones_contables: formData.observaciones_contables,
-      moneda: formData.moneda,
-      costo_unitario: formData.costo_unitario,
-      tipo_cambio: formData.tipo_cambio,
       ...checkUpdate
     };
     const key = `${service.id_venta}-${service.n_linea}`;
